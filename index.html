@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui">
+    <title>Aethel: Orbital</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #05020c;
+            font-family: 'Cinzel', 'Times New Roman', serif;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        #game-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(111, 66, 193, 0.3);
+        }
+    </style>
+    <!-- Phaser 3 CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+</head>
+<body>
+    <div id="game-container"></div>
+
+    <script>
+        const config = {
+            type: Phaser.AUTO,
+            width: 1080,
+            height: 1920,
+            parent: 'game-container',
+            scale: {
+                mode: Phaser.Scale.FIT,
+                autoCenter: Phaser.Scale.CENTER_BOTH
+            },
+            physics: {
+                default: 'arcade',
+                arcade: { debug: false }
+            },
+            scene: {
+                preload: preload,
+                create: create,
+                update: update
+            }
+        };
+
+        const game = new Phaser.Game(config);
+        
+        let targetAngle = 180; // O ângulo para vencer
+        let currentAngle = 0;
+        let outerOrbit;
+        let innerOrbit;
+        let jewels = [];
+        let particles;
+        let emitter;
+        let won = false;
+        let levelText;
+        let feedbackText;
+        let level = 1;
+
+        function preload() {
+            // Criando assets básicos com desenhos de vetor nativos para o jogo carregar INSTANTANEAMENTE
+            // (Sem necessidade de carregar imagens externas no Github, tudo roda via código)
+        }
+
+        function create() {
+            const width = this.cameras.main.width;
+            const height = this.cameras.main.height;
+
+            // Fundo espacial gerado dinamicamente
+            let bg = this.add.graphics();
+            bg.fillGradientStyle(0x0a0416, 0x0a0416, 0x020005, 0x020005, 1);
+            bg.fillRect(0, 0, width, height);
+
+            // Estrelas de fundo ambientais
+            for (let i = 0; i < 80; i++) {
+                let x = Phaser.Math.Between(0, width);
+                let y = Phaser.Math.Between(0, height);
+                let star = this.add.circle(x, y, Phaser.Math.Between(1, 3), 0xffffff, Phaser.Math.FloatBetween(0.2, 0.8));
+                this.tweens.add({
+                    targets: star,
+                    alpha: 0.1,
+                    duration: Phaser.Math.Between(1000, 3000),
+                    yoyo: true,
+                    repeat: -1
+                });
+            }
+
+            // UI Superior (Sofisticada e minimalista)
+            levelText = this.add.text(width / 2, 180, `NÍVEL ${level}`, {
+                fontFamily: 'Georgia, serif',
+                fontSize: '64px',
+                fill: '#ffd700',
+                align: 'center'
+            }).setOrigin(0.5);
+            
+            this.add.text(width / 2, 250, "ALINHE OS CRISTAIS PARA ATIVAR O REATOR", {
+                fontFamily: 'Arial',
+                fontSize: '24px',
+                fill: '#b8a4e3',
+                align: 'center'
+            }).setOrigin(0.5);
+
+            // Sistemas de partículas e efeitos de luz de alto nível
+            particles = this.add.particles(0, 0, 'glow', { // Criando um rastro de partículas no código
+                lifespan: 1000,
+                speed: { min: 20, max: 100 },
+                scale: { start: 0.4, end: 0 },
+                blendMode: 'ADD',
+                frequency: 50,
+                alpha: { start: 0.6, end: 0 }
+            });
+
+            // Gerando as imagens das peças do jogo via código para o carregamento ser absurdamente rápido
+            createGameGraphics(this);
+
+            // Órbita Interna (Estática, o alvo)
+            innerOrbit = this.add.image(width / 2, height / 2, 'inner').setScale(1.2);
+            innerOrbit.setTint(0x4b0082);
+
+            // Órbita Externa Interativa (A que o jogador gira)
+            outerOrbit = this.add.image(width / 2, height / 2, 'outer').setScale(1.2);
+            outerOrbit.setInteractive({ useHandCursor: true });
+            
+            // Fazer a peça girar ao arrastar (Comunicação tátil fluida)
+            this.input.setDraggable(outerOrbit);
+            
+            outerOrbit.on('drag', (pointer, dragX, dragY) => {
+                if (won) return;
+                
+                // Calcular ângulo baseado na posição do toque do usuário
+                let angle = Phaser.Math.Angle.Between(width / 2, height / 2, pointer.x, pointer.y);
+                let degrees = Phaser.Math.RadToDeg(angle);
+                
+                // Suavizar a rotação com física
+                this.tweens.add({
+                    targets: outerOrbit,
+                    angle: degrees,
+                    duration: 100,
+                    ease: 'Quad.easeOut'
+                });
+
+                // Haptic virtual ou som no clique (feedback)
+                if (Math.abs(outerOrbit.angle - targetAngle) < 10) {
+                    // Luzes aumentam de brilho ao chegar perto
+                    outerOrbit.setTint(0xffd700);
+                } else {
+                    outerOrbit.setTint(0xffffff);
+                }
+            });
+
+            // Adicionar Cristais Ópticos
+            jewels.push(this.add.image(width / 2, height / 2, 'jewel').setOrigin(0.5, 4.5).setTint(0xff00ff));
+            jewels.push(this.add.image(width / 2, height / 2, 'jewel_gold').setOrigin(0.5, -3.5).setTint(0x00ffff));
+
+            // Relacionar cristais à rotação da órbita externa
+            this.events.on('update', () => {
+                if(won) return;
+                jewels[0].angle = outerOrbit.angle;
+                jewels[1].angle = outerOrbit.angle + 180; // Cristal oposto
+            });
+
+            // Tela de Sucesso
+            feedbackText = this.add.text(width / 2, height - 250, "TOQUE E GIRE O ANEL EXTERNO", {
+                fontFamily: 'Georgia, serif',
+                fontSize: '32px',
+                fill: '#a890e5'
+            }).setOrigin(0.5);
+
+            // Adicionando um leve pulsar para guiar o jogador
+            this.tweens.add({
+                targets: feedbackText,
+                alpha: 0.5,
+                duration: 1000,
+                yoyo: true,
+                repeat: -1
+            });
+        }
+
+        function update() {
+            if (won) return;
+
+            // Verificar proximidade do alinhamento ideal (Lógica do puzzle)
+            let diff = Math.abs(outerOrbit.angle - targetAngle);
+            if (diff < 3 || diff > 357) {
+                victory(this);
+            }
+        }
+
+        function victory(scene) {
+            won = true;
+            outerOrbit.disableInteractive();
+            outerOrbit.angle = targetAngle; // Trava perfeitamente no lugar
+
+            // Animação de sucesso
+            scene.cameras.main.flash(500, 100, 0, 200);
+            
+            feedbackText.setText("CONECTADO! MECANISMO ATIVADO");
+            feedbackText.setStyle({ fill: '#ffd700', fontSize: '42px' });
+
+            // Efeito visual luxuoso de transição
+            scene.tweens.add({
+                targets: [outerOrbit, innerOrbit],
+                scale: 1.4,
+                duration: 600,
+                yoyo: true,
+                ease: 'Elastic.easeOut'
+            });
+
+            // Partículas mágicas explodindo do centro
+            let spark = scene.add.graphics();
+            spark.fillStyle(0xffd700, 1);
+            spark.fillCircle(0, 0, 8);
+            spark.generateTexture('spark', 16, 16);
+            
+            let emitter = scene.add.particles(scene.cameras.main.width / 2, scene.cameras.main.height / 2, 'spark', {
+                speed: { min: 100, max: 400 },
+                angle: { min: 0, max: 360 },
+                scale: { start: 1.5, end: 0 },
+                lifespan: 1500,
+                gravityY: 0,
+                quantity: 80,
+                emitting: false
+            });
+            emitter.explode(80);
+
+            // Passa de fase automaticamente em 3 segundos
+            scene.time.delayedCall(2500, () => {
+                level++;
+                levelText.setText(`NÍVEL ${level}`);
+                targetAngle = Phaser.Math.Between(-180, 180); // Novo desafio aleatório
+                won = false;
+                outerOrbit.setInteractive();
+                feedbackText.setText("ENCONTRE O ALINHAMENTO");
+                feedbackText.setStyle({ fill: '#a890e5', fontSize: '32px' });
+            });
+        }
+
+        // Função utilitária para gerar os gráficos luxuosos dinamicamente no jogo sem precisar carregar imagens
+        function createGameGraphics(scene) {
+            // Gerando Brilho de Fundo
+            let glow = scene.add.graphics();
+            glow.fillStyle(0xffffff, 0.5);
+            glow.fillCircle(16, 16, 16);
+            glow.generateTexture('glow', 32, 32);
+
+            // Gerando Órbita Interna (Estilo luxuoso)
+            let inner = scene.add.graphics();
+            inner.lineStyle(10, 0x6f42c1, 0.8);
+            inner.strokeCircle(200, 200, 150);
+            inner.lineStyle(2, 0xffd700, 0.5);
+            inner.strokeCircle(200, 200, 130);
+            inner.generateTexture('inner', 400, 400);
+
+            // Gerando Órbita Externa (Dourada e ornamentada)
+            let outer = scene.add.graphics();
+            outer.lineStyle(15, 0xffd700, 0.9);
+            outer.strokeCircle(200, 200, 180);
+            outer.lineStyle(4, 0x4b0082, 1);
+            outer.strokeCircle(200, 200, 165);
+            // Dentes de engrenagem
+            for(let i=0; i<360; i+=15) {
+                let rad = Phaser.Math.DegToRad(i);
+                let x1 = 200 + Math.cos(rad) * 180;
+                let y1 = 200 + Math.sin(rad) * 180;
+                let x2 = 200 + Math.cos(rad) * 198;
+                let y2 = 200 + Math.sin(rad) * 198;
+                outer.lineStyle(8, 0xffd700, 0.9);
+                outer.lineBetween(x1, y1, x2, y2);
+            }
+            outer.generateTexture('outer', 400, 400);
+
+            // Cristal/Jóia do encaixe
+            let jewel = scene.add.graphics();
+            jewel.fillStyle(0x00ffff, 1);
+            jewel.beginPath();
+            jewel.moveTo(25, 0);
+            jewel.lineTo(50, 25);
+            jewel.lineTo(25, 50);
+            jewel.lineTo(0, 25);
+            jewel.closePath();
+            jewel.fill();
+            jewel.generateTexture('jewel', 50, 50);
+
+            let jewelGold = scene.add.graphics();
+            jewelGold.fillStyle(0xffd700, 1);
+            jewelGold.beginPath();
+            jewelGold.moveTo(25, 0);
+            jewelGold.lineTo(50, 25);
+            jewelGold.lineTo(25, 50);
+            jewelGold.lineTo(0, 25);
+            jewelGold.closePath();
+            jewelGold.fill();
+            jewelGold.generateTexture('jewel_gold', 50, 50);
+        }
+    </script>
+</body>
+</html>
